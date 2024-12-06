@@ -13,10 +13,16 @@ from sklearn.preprocessing import StandardScaler, OneHotEncoder
 from sklearn.compose import ColumnTransformer
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import precision_recall_fscore_support, roc_auc_score, confusion_matrix
+import os
+from dotenv import load_dotenv
+
+# Chargement des variables d'environnement en remontant d'un niveau
+load_dotenv('../.env')
+load_dotenv('../.secrets')
 
 # Configuration MLflow
 mlflow.set_tracking_uri("http://localhost:5000")
-mlflow.set_experiment("fraud_detection_version_def_avecetl")
+mlflow.set_experiment("fraud_detection")
 
 # Chargement des données prétraitées
 data_reduc = pd.read_csv('data_post_etl.csv')
@@ -112,7 +118,7 @@ for config in column_configs:
         print(f"AUC-ROC: {auc_roc:.3f}")
 
         # Sauvegarder le modèle
-        model_filename = 'random_forest_model.pkl'
+        '''model_filename = 'random_forest_model.pkl'
         joblib.dump(pipeline, model_filename)
         mlflow.log_artifact(model_filename)
-        print("Modèle sauvegardé !")
+        print("Modèle sauvegardé !")'''

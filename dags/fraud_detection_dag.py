@@ -12,7 +12,6 @@ import json
 import os
 import pandas as pd
 
-# Configuration par défaut pour le DAG
 default_args = {
     'owner': 'fraud_team',
     'depends_on_past': False,
@@ -21,7 +20,6 @@ default_args = {
     'retry_delay': timedelta(minutes=1),
 }
 
-# Définition des fonctions Python pour les tâches
 def load_dependencies(**context):
     """Charge le modèle et l'ETL depuis S3."""
     try:
@@ -68,10 +66,15 @@ def process_transaction(**context):
             logger.warning("Aucune transaction à traiter.")
             return 'skip_processing'
 
-        transactions = json.loads(transactions)
+        if isinstance(transactions, str):
+            transactions = json.loads(transactions)
+            
         df = pd.DataFrame(transactions['data'], columns=transactions['columns'])
         df = df.rename(columns={'current_time': 'trans_date_trans_time'})
-
+        
+        # Ajout de unix_time
+        df['unix_time'] = df['trans_date_trans_time'].astype('int64') // 10**9
+        
         # Charger ETL et modèle
         etl_path = ti.xcom_pull(key='etl_path')
         model_path = ti.xcom_pull(key='model_path')
@@ -80,7 +83,9 @@ def process_transaction(**context):
         etl = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(etl)
 
+        logger.info("Transformation des données...")
         df_transformed = etl.transform_data(df)
+        
         model = joblib.load(model_path)
         prediction = model.predict(df_transformed)[0]
         probability = model.predict_proba(df_transformed)[:, 1][0]
@@ -98,14 +103,45 @@ def send_transaction_email(**context):
     """Envoie une alerte par email selon le résultat."""
     try:
         ti = context['task_instance']
-        is_fraud = ti.xcom_pull(key='is_fraud')
+        transaction = ti.xcom_pull(task_ids='fetch_api', key='transactions')
         probability = ti.xcom_pull(key='fraud_probability')
+        is_fraud = ti.xcom_pull(key='is_fraud')
+
+        if isinstance(transaction, str):
+            transaction = json.loads(transaction)
+
+        df = pd.DataFrame(transaction['data'], columns=transaction['columns']).iloc[0]
+        amount = "{:.2f}".format(float(df['amt']))
+        transaction_date = pd.to_datetime(df['current_time'], unit='ms').strftime('%Y-%m-%d %H:%M:%S')
 
         subject = "🚨 ALERTE : FRAUDE DETECTÉE" if is_fraud else "✅ Transaction normale"
-        body = f"Transaction {'frauduleuse' if is_fraud else 'normale'} détectée avec une probabilité de {probability:.2%}."
+        status = "FRAUDULEUSE" if is_fraud else "NORMALE"
+        
+        body = f"""
+        Transaction {status} détectée!
+        
+        Probabilité de fraude: {probability:.2%}
+        
+        Détails de la transaction:
+        --------------------------
+        ID Transaction: {df['trans_num']}
+        Montant: ${amount}
+        Date/Heure: {transaction_date}
+        
+        Informations sur le marchand:
+        ----------------------------
+        Nom: {df['merchant']}
+        Ville: {df['city']}
+        État: {df['state']}
+        
+        Informations sur le client:
+        --------------------------
+        Nom: {df['first']} {df['last']}
+        Ville: {df['city']}
+        """
 
         send_email(subject=subject, body=body)
-        logger.info(f"Email envoyé : {subject}.")
+        logger.info(f"Email envoyé : {subject}")
     except Exception as e:
         logger.error(f"Erreur lors de l'envoi de l'email : {e}")
 
@@ -120,8 +156,20 @@ def store_transaction(**context):
             logger.error("Aucune transaction à stocker.")
             return
 
-        df = pd.DataFrame(json.loads(transactions)['data'], columns=json.loads(transactions)['columns'])
+        if isinstance(transactions, str):
+            transactions = json.loads(transactions)
+
+        df = pd.DataFrame(transactions['data'], columns=transactions['columns'])
+        
+        # Renommage de current_time en trans_date_trans_time avant stockage
+        if 'current_time' in df.columns:
+            df = df.rename(columns={'current_time': 'trans_date_trans_time'})
+            df['trans_date_trans_time'] = pd.to_datetime(df['trans_date_trans_time'], unit='ms')
+
+        # Ajout de is_fraud
         df['is_fraud'] = is_fraud
+        
+        # Stockage dans la table appropriée
         engine = get_db_engine()
         table = 'fraud_transactions' if is_fraud else 'normal_transactions'
         df.to_sql(table, engine, if_exists='append', index=False)
@@ -130,7 +178,6 @@ def store_transaction(**context):
         logger.error(f"Erreur lors du stockage des transactions : {e}")
         raise
 
-# Définition du DAG
 with DAG(
     'fraud_detection_pipeline',
     default_args=default_args,
@@ -180,7 +227,7 @@ with DAG(
         python_callable=lambda: logger.info("Pas de traitement nécessaire."),
     )
 
-    # Orchestration des tâches
+    # Orchestration
     load_deps >> fetch_api_task >> process_task
     process_task >> [notify_fraud_task, notify_normal_task, skip_task]
     notify_fraud_task >> store_fraud_task

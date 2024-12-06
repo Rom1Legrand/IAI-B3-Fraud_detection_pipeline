@@ -68,7 +68,7 @@ def send_email(subject: str, body: str, to_email: Optional[str] = None) -> bool:
     try:
         msg = MIMEMultipart()
         msg['From'] = os.environ.get('EMAIL_USER')
-        msg['To'] = to_email or os.environ.get('EMAIL_TO', 'default@email.com')
+        msg['To'] = to_email or os.environ.get('EMAIL_TO', 'dsgattaca@gmail.com')
         msg['Subject'] = subject
         
         msg.attach(MIMEText(body, 'plain'))

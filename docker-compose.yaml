@@ -1,36 +1,37 @@
 #version: '3.8'
-x-airflow-common:
- &airflow-common
- build: .
- environment:
-   &airflow-common-env
-   AIRFLOW__CORE__EXECUTOR: CeleryExecutor
-   AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
-   AIRFLOW__CELERY__RESULT_BACKEND: db+postgresql://airflow:airflow@postgres/airflow
-   AIRFLOW__CELERY__BROKER_URL: redis://:@redis:6379/0
-   AIRFLOW__CORE__FERNET_KEY: ''
-   AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'true'
-   AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
-   AIRFLOW__API__AUTH_BACKENDS: 'airflow.api.auth.backend.basic_auth,airflow.api.auth.backend.session'
-   AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: 'true'
-   _PIP_ADDITIONAL_REQUIREMENTS: ${_PIP_ADDITIONAL_REQUIREMENTS:-}
- env_file:
-   - .env
-   - .secrets
- volumes:
-   - ${AIRFLOW_PROJ_DIR:-.}/dags:/opt/airflow/dags
-   - ${AIRFLOW_PROJ_DIR:-.}/logs:/opt/airflow/logs
-   - ${AIRFLOW_PROJ_DIR:-.}/config:/opt/airflow/config
-   - ${AIRFLOW_PROJ_DIR:-.}/plugins:/opt/airflow/plugins
- networks:
-   - airflow_default
- user: "${AIRFLOW_UID:-50000}:0"
- depends_on:
-   &airflow-common-depends-on
-   redis:
-     condition: service_healthy
-   postgres:
-     condition: service_healthy
+
+x-airflow-common: 
+  &airflow-common
+  build: .
+  environment:
+    &airflow-common-env
+    AIRFLOW__CORE__EXECUTOR: CeleryExecutor
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
+    AIRFLOW__CELERY__RESULT_BACKEND: db+postgresql://airflow:airflow@postgres/airflow
+    AIRFLOW__CELERY__BROKER_URL: redis://:@redis:6379/0
+    AIRFLOW__CORE__FERNET_KEY: ''
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'true'
+    AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+    AIRFLOW__API__AUTH_BACKENDS: 'airflow.api.auth.backend.basic_auth,airflow.api.auth.backend.session'
+    AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: 'true'
+    _PIP_ADDITIONAL_REQUIREMENTS: ${_PIP_ADDITIONAL_REQUIREMENTS:-}
+  env_file:
+    - .env
+    - .secrets
+  volumes:
+    - ${AIRFLOW_PROJ_DIR:-.}/dags:/opt/airflow/dags
+    - ${AIRFLOW_PROJ_DIR:-.}/logs:/opt/airflow/logs
+    - ${AIRFLOW_PROJ_DIR:-.}/config:/opt/airflow/config
+    - ${AIRFLOW_PROJ_DIR:-.}/plugins:/opt/airflow/plugins
+  networks:
+    - airflow_default
+  user: "${AIRFLOW_UID:-50000}:0"
+  depends_on:
+    &airflow-common-depends-on
+    redis:
+      condition: service_healthy
+    postgres:
+      condition: service_healthy
 
 services:
   postgres:
@@ -48,8 +49,21 @@ services:
       start_period: 5s
     restart: always
     networks:
-     - airflow_default
+      - airflow_default
 
+  # MLFlow Postgres configuration (commented out)
+  #mlflow-postgres:
+  #  image: postgres:13
+  #  environment:
+  #    POSTGRES_USER: mlflow
+  #    POSTGRES_PASSWORD: mlflow
+  #    POSTGRES_DB: mlflow
+  #  networks:
+  #    - airflow_default
+  #  healthcheck:
+  #    test: ["CMD", "pg_isready", "-U", "mlflow"]
+  #    interval: 10s
+  #    retries: 5
 
   redis:
     image: redis:7.2-bookworm
@@ -63,8 +77,7 @@ services:
       start_period: 30s
     restart: always
     networks:
-     - airflow_default
-
+      - airflow_default
 
   airflow-webserver:
     <<: *airflow-common
@@ -232,37 +245,44 @@ services:
       dockerfile: Dockerfile.streamlit
     ports:
       - "8501:8501"
-    environment:
-      - NEON_DATABASE_URL=${NEON_DATABASE_URL}
+    env_file:
+      - .env
+      - .secrets
     volumes:
       - ./streamlit:/app
     depends_on:
       - postgres
+    networks:
+      - airflow_default
 
   mlflow:
     build:
-     context: .
-     dockerfile: Dockerfile.mlflow
+      context: .
+      dockerfile: Dockerfile.mlflow
+      args:
+        - NEON_DATABASE_URL=${NEON_DATABASE_URL}
     ports:
-     - "5000:5000"
+      - "5000:5000"
+    environment:
+      NEON_DATABASE_URL: "${NEON_DATABASE_URL}"
+      AWS_ACCESS_KEY_ID: "${AWS_ACCESS_KEY_ID}"
+      AWS_SECRET_ACCESS_KEY: "${AWS_SECRET_ACCESS_KEY}"
+      S3_BUCKET: "${S3_BUCKET}"
     env_file:
-     - .env
-     - .secrets
-    networks:
-     - airflow_default
-    depends_on:
-     - postgres
-    healthcheck:
-     test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
-     interval: 30s
-     timeout: 10s
-     retries: 3
-     restart: always
+      - ./.env
+      - ./.secrets
+    command: >
+      sh -c 'mlflow server 
+      --host 0.0.0.0 
+      --port 5000 
+      --backend-store-uri "${NEON_DATABASE_URL}"
+      --default-artifact-root s3://${S3_BUCKET}/mlflow/ 
+      --serve-artifacts'
 
 networks:
- airflow_default:
-   name: infra_MLOPS
-   driver: bridge
+  airflow_default:
+    name: infra_MLOPS
+    driver: bridge
 
 volumes:
   postgres-db-volume:
