@@ -136,6 +136,7 @@ AIRFLOW__CORE__FERNET_KEY=''
 #### DAG configuration common.py file
 Don't forget to config the email recipient in "def send_email"
 
+
 ### 3. Database Setup
 
 #### Access Neon Database
