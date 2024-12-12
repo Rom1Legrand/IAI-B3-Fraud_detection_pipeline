@@ -3,6 +3,48 @@
 ## 📋 Overview
 FraudDetection is an end-to-end fraud detection system that processes payment transactions in real-time and provides immediate alerts for suspicious activities. Built with modern data engineering practices, it combines machine learning, real-time processing, and automated monitoring to protect financial transactions.
 
+## ⚠️ Important Security Notice
+**CRITICAL**: This project contains sensitive configuration files that must be handled with care:
+
+- Both `.env` and `.secrets` files MUST be added to `.gitignore`
+- Never commit these files to version control
+- Use the provided `.env.example` and `.secrets.example` as templates
+
+## 🏗️ Technical Architecture and options
+This project can be deployed in two configurations:
+
+### Services
+- **Apache Airflow**: Workflow orchestration
+  - Transaction processing DAG (every minute)
+  - Backup DAG (monthly)
+  - Monitoring DAG (daily)
+
+- **MLflow**: ML model management
+  - Model versioning
+  - Experiment tracking
+  - Model artifacts storage
+  - Available in two configurations:
+    1. Local PostgreSQL (default)
+    2. NeonDB (cloud option)
+  
+- **Streamlit**: Data visualization
+  - Real-time dashboard
+  - Interactive data exploration
+  - Performance metrics
+
+### Infrastructure option
+1. Local PostgreSQL (Default)
+- MLflow metadata stored in local PostgreSQL container
+- Simpler setup for development and testing
+- No external database dependencies
+- Ideal for local development and testing
+
+2. NeonDB Configuration
+- MLflow metadata stored in NeonDB (cloud PostgreSQL)
+- Better for production environments
+- Enables team collaboration
+- Requires NeonDB account and configuration
+
 ## 🎯 Key Features
 - **Real-time Transaction Processing** 🔄
   - Minute-by-minute transaction monitoring
@@ -57,95 +99,77 @@ RandomForestClassifier(
 4. SMOTE application
 5. Random Forest training
 
-## 🏗️ Technical Architecture
-
-### Services
-- **Apache Airflow**: Workflow orchestration
-  - Transaction processing DAG (every minute)
-  - Backup DAG (monthly)
-  - Monitoring DAG (daily)
-
-- **MLflow**: ML model management
-  - Model versioning
-  - Experiment tracking
-  - Model artifacts storage
-
-- **Streamlit**: Data visualization
-  - Real-time dashboard
-  - Interactive data exploration
-  - Performance metrics
-
-## 🛠️ Detailed Installation Guide
+## 🛠️ Installation Guide
 
 ### 1. Prerequisites
 ```plaintext
-- Docker
+Required for all configurations:
+- Docker and Docker Compose
 - Python 3.9+
 - AWS Account & S3 Bucket
-- Neon Database Account
 - Gmail Account (for SMTP)
+
+Additional for NeonDB configuration:
+- Neon Database Account
 ```
 
-### 2. Environment Configuration
+### 2. Environment Setup
 
-#### Create .env file
+#### A. Configure Environment Files
+1. Create environment files from templates:
 ```bash
-# Airflow
-AIRFLOW_UID=50000
-AIRFLOW_USERNAME=admin
-
-# Service Configuration
-SMTP_SERVER=smtp.gmail.com
-SMTP_PORT=587
-S3_BUCKET=your-bucket-name
-
-# MLflow
-MLFLOW_TRACKING_URI=http://mlflow:5000
-MLFLOW_DEFAULT_ARTIFACT_ROOT=s3://${S3_BUCKET}/mlflow/
-
-# Airflow Configuration
-AIRFLOW__CORE__EXECUTOR=CeleryExecutor
-AIRFLOW__CORE__LOAD_EXAMPLES=false
-AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION=true
+cp .env.example .env
+cp .secrets.example .secrets
 ```
 
-#### Create .secrets file
+2. Configure `.secrets` and `.env` according to your chosen infrastructure (uncomment local postgres url or not in env)
+
+### B. Docker Configuration
+Configure docker-compose.yml according to your chosen infrastructure option:
+
+#### Option 1: Local PostgreSQL (Default)
+- Ensure the local PostgreSQL services are uncommented in docker-compose.yml:
+  - `mlflow-postgres` service
+  - Default `mlflow` service configuration
+- Comment out the Option 2 NeonDB `mlflow` service configuration
+
+#### Option 2: NeonDB
+- Comment out the Option 1 services in docker-compose.yml:
+  - Comment out `mlflow-postgres` service
+  - Comment out default `mlflow` service configuration
+- Uncomment the Option 2 NeonDB `mlflow` service configuration
+
+#### C. Configure Email Notifications
+1. Enable 2-Step Verification in your Google Account
+2. Generate App Password:
+   - Go to Google Account Settings
+   - Security > App Passwords
+   - Select "Mail" and "Other"
+   - Copy generated password to `.secrets` EMAIL_PASSWORD
+3. Update email recipient in `dags/utils/common.py`
+
+#### D. Configure AWS S3
+1. Create S3 Bucket:
 ```bash
-# Database Credentials
-NEON_DATABASE_URL=postgresql://user:password@your-neon-db-url/dbname?sslmode=require
-
-# AWS Credentials
-AWS_ACCESS_KEY_ID=your_access_key_id
-AWS_SECRET_ACCESS_KEY=your_secret_access_key
-
-# Email Credentials
-EMAIL_USER=your.email@gmail.com
-EMAIL_PASSWORD=your_app_specific_password
-
-# Service Passwords
-AIRFLOW_PASSWORD=admin
-MLFLOW_TRACKING_PASSWORD=admin
-
-# Airflow Database Connections
-AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@postgres/airflow
-AIRFLOW__CELERY__RESULT_BACKEND=db+postgresql://airflow:airflow@postgres/airflow
-AIRFLOW__CELERY__BROKER_URL=redis://:@redis:6379/0
-AIRFLOW__CORE__FERNET_KEY=''
+aws s3 mb s3://your-bucket-name
 ```
 
-#### DAG configuration common.py file
-Don't forget to config the email recipient in "def send_email"
-
+2. Create required directories and upload initial files:
+```bash
+# Upload ETL script and model
+aws s3 cp models/etl.py s3://your-bucket-name/fraud_detection_bucket/etl/
+aws s3 cp models/random_forest_model.pkl s3://your-bucket-name/fraud_detection_bucket/models/
+```
 
 ### 3. Database Setup
 
-#### Access Neon Database
-1. Create account on Neon (https://neon.tech)
-2. Create new project
-3. Get connection string
-4. Connect using psql or your preferred database tool
+#### Option 1: Local PostgreSQL (Default)
+No additional setup required - tables will be created automatically
 
-#### Create Required Tables
+#### Option 2: NeonDB Setup
+1. Create a Neon account and project
+2. Execute the following SQL scripts:
+
 ```sql
 -- Create fraud_transactions table
 CREATE TABLE fraud_transactions (
@@ -173,9 +197,9 @@ CREATE TABLE fraud_transactions (
     trans_date_trans_time TIMESTAMP
 );
 
--- Create normal_transactions table
+-- Create normal_transactions table (same structure)
 CREATE TABLE normal_transactions (
-    -- Same structure as fraud_transactions
+    [Same structure as fraud_transactions]
     is_fraud BOOLEAN DEFAULT FALSE
 );
 
@@ -186,93 +210,26 @@ CREATE INDEX idx_normal_trans_num ON normal_transactions(trans_num);
 CREATE INDEX idx_fraud_trans_num ON fraud_transactions(trans_num);
 
 -- Create views
-  -- recent_trasaction (last 24h)
 CREATE OR REPLACE VIEW recent_transactions AS
-SELECT 
-    transaction_id,
-    merchant,
-    category,
-    amt,
-    city,
-    state,
-    is_fraud,
-    trans_date_trans_time,
-    NULL as distance,
-    NULL as fraud_probability
-FROM (
-    SELECT * FROM normal_transactions
-    UNION ALL
-    SELECT * FROM fraud_transactions
-) all_transactions
-WHERE trans_date_trans_time >= NOW() - INTERVAL '24 hours'
-ORDER BY trans_date_trans_time DESC;
+[Your view definition]
 
-  -- daily stats
 CREATE OR REPLACE VIEW daily_stats AS
-SELECT 
-    DATE(trans_date_trans_time) as date,
-    COUNT(*) as total_transactions,
-    COUNT(CASE WHEN is_fraud THEN 1 END) as fraud_count,
-    ROUND(AVG(amt), 2) as avg_amount,
-    ROUND(SUM(amt), 2) as total_amount,
-    ROUND(COUNT(CASE WHEN is_fraud THEN 1 END)::DECIMAL / COUNT(*) * 100, 2) as fraud_rate
-FROM (
-    SELECT * FROM normal_transactions
-    UNION ALL
-    SELECT * FROM fraud_transactions
-) all_transactions
-GROUP BY DATE(trans_date_trans_time)
-ORDER BY DATE(trans_date_trans_time) DESC;
+[Your view definition]
 ```
 
-### 4. AWS S3 Setup
+### 4. Deploy Services
 
-1. Create S3 Bucket
-```bash
-aws s3 mb s3://your-bucket-name
-```
-
-2. Create Required Directory Structure
-```bash
-fraud_detection_bucket/
-├── etl/
-│   └── etl.py
-├── models/
-│   └── random_forest_model.pkl
-└── backups/
-```
-
-3. Upload Initial Files
-```bash
-# Upload ETL script
-aws s3 cp models/etl.py s3://your-bucket-name/fraud_detection_bucket/etl/
-
-# Upload model
-aws s3 cp models/random_forest_model.pkl s3://your-bucket-name/fraud_detection_bucket/models/
-```
-
-### 5. Gmail Setup for SMTP
-
-1. Enable 2-Step Verification in your Google Account
-2. Generate App Password:
-   - Go to Google Account Settings
-   - Security > App Passwords
-   - Select "Mail" and "Other"
-   - Copy generated password to .secrets EMAIL_PASSWORD
-
-### 6. Deploy Services
-
-1. Build Docker images
+1. Build Docker images:
 ```bash
 docker-compose build
 ```
 
-2. Start services
+2. Start services:
 ```bash
 docker-compose up -d
 ```
 
-3. Verify service status
+3. Verify service status:
 ```bash
 docker-compose ps
 ```
@@ -281,15 +238,15 @@ docker-compose ps
 
 - Airflow UI: http://localhost:8080
   - Username: admin
-  - Password: admin
+  - Password: [from .secrets]
 
 - MLflow UI: http://localhost:5000
   - Username: admin
-  - Password: admin
+  - Password: [from .secrets]
 
 - Streamlit Dashboard: http://localhost:8501
 
-## 🔍 Monitoring
+## 🔍 Monitoring and Performance
 
 ### System Health Checks
 The monitoring_dag.py performs daily health checks on:
@@ -309,15 +266,18 @@ Access via Streamlit dashboard:
 
 ### Common Issues
 
-1. **Database Connection Errors**
+1. **Database Connection Issues**
 ```bash
-# Check database connection
+# For Local PostgreSQL
+docker-compose ps mlflow-postgres
+docker-compose logs mlflow-postgres
+
+# For NeonDB
 psql $NEON_DATABASE_URL
 ```
 
 2. **S3 Access Issues**
 ```bash
-# Verify AWS credentials
 aws s3 ls s3://your-bucket-name
 ```
 
@@ -328,18 +288,22 @@ aws s3 ls s3://your-bucket-name
 
 4. **Docker Issues**
 ```bash
-# Check logs
 docker-compose logs -f
-
-# Restart services
 docker-compose restart
 ```
 
 ## 🔐 Security Notes
-- Keep .secrets file secure and never commit to version control
-- Rotate credentials regularly
+- Keep `.env` and `.secrets` secure
+- Regularly rotate credentials
 - Monitor access logs
 - Use least privilege principle for AWS IAM
+- Monitor MLflow experiment tracking logs
+
+**Technical Constraint**: Due to a current limitation in Docker's environment variable handling, the NeonDB URL must be specified in the `.env` file rather than `.secrets` for MLflow experiment tracking to work properly. While this is a temporary solution, it makes it even more critical to:
+1. Never commit the `.env` file
+2. Regularly rotate your database credentials
+3. Use restricted database users with minimum required permissions
+4. Consider this in your security assessment
 
 ## 📝 License
-
+[Your License Information]

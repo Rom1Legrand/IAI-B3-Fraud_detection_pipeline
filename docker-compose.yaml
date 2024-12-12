@@ -1,7 +1,7 @@
-#version: '3.8'
+# Version locale par défaut avec option NeonDB en commentaires
+# version: '3.8'
 
-x-airflow-common: 
-  &airflow-common
+x-airflow-common: &airflow-common
   build: .
   environment:
     &airflow-common-env
@@ -51,19 +51,22 @@ services:
     networks:
       - airflow_default
 
-  # MLFlow Postgres configuration (commented out)
-  #mlflow-postgres:
-  #  image: postgres:13
-  #  environment:
-  #    POSTGRES_USER: mlflow
-  #    POSTGRES_PASSWORD: mlflow
-  #    POSTGRES_DB: mlflow
-  #  networks:
-  #    - airflow_default
-  #  healthcheck:
-  #    test: ["CMD", "pg_isready", "-U", "mlflow"]
-  #    interval: 10s
-  #    retries: 5
+  # Option 1 (default): Local MLflow PostgreSQL
+  mlflow-postgres:
+    image: postgres:13
+    environment:
+      POSTGRES_USER: mlflow
+      POSTGRES_PASSWORD: mlflow
+      POSTGRES_DB: mlflow
+    volumes:
+      - mlflow-db-volume:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "mlflow"]
+      interval: 10s
+      retries: 5
+      start_period: 5s
+    networks:
+      - airflow_default
 
   redis:
     image: redis:7.2-bookworm
@@ -208,37 +211,6 @@ services:
     volumes:
       - ${AIRFLOW_PROJ_DIR:-.}:/sources
 
-  airflow-cli:
-    <<: *airflow-common
-    profiles:
-      - debug
-    environment:
-      <<: *airflow-common-env
-      CONNECTION_CHECK_MAX_COUNT: "0"
-    command:
-      - bash
-      - -c
-      - airflow
-
-  flower:
-    <<: *airflow-common
-    command: celery flower
-    profiles:
-      - flower
-    ports:
-      - "5555:5555"
-    healthcheck:
-      test: ["CMD", "curl", "--fail", "http://localhost:5555/"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 30s
-    restart: always
-    depends_on:
-      <<: *airflow-common-depends-on
-      airflow-init:
-        condition: service_completed_successfully
-
   streamlit:
     build:
       context: .
@@ -255,29 +227,62 @@ services:
     networks:
       - airflow_default
 
+  # Option 1 (default): Local MLflow configuration
   mlflow:
     build:
       context: .
       dockerfile: Dockerfile.mlflow
-      args:
-        - NEON_DATABASE_URL=${NEON_DATABASE_URL}
     ports:
       - "5000:5000"
-    environment:
-      NEON_DATABASE_URL: "${NEON_DATABASE_URL}"
-      AWS_ACCESS_KEY_ID: "${AWS_ACCESS_KEY_ID}"
-      AWS_SECRET_ACCESS_KEY: "${AWS_SECRET_ACCESS_KEY}"
-      S3_BUCKET: "${S3_BUCKET}"
     env_file:
-      - ./.env
-      - ./.secrets
+      - .env
+      - .secrets
     command: >
-      sh -c 'mlflow server 
+      sh -c '
+      echo "Testing connection to PostgreSQL with URL: ${MLFLOW_DB_URL}" &&
+      mlflow server 
       --host 0.0.0.0 
       --port 5000 
-      --backend-store-uri "${NEON_DATABASE_URL}"
+      --backend-store-uri "${MLFLOW_DB_URL}"
       --default-artifact-root s3://${S3_BUCKET}/mlflow/ 
       --serve-artifacts'
+    depends_on:
+      mlflow-postgres:
+        condition: service_healthy
+    networks:
+      - airflow_default
+
+  # Option 2: NeonDB MLflow configuration
+  # Pour utiliser NeonDB:
+  # 1. Commentez la section mlflow ci-dessus
+  # 2. Décommentez la section suivante
+  # mlflow:
+  #   build:
+  #     context: .
+  #     dockerfile: Dockerfile.mlflow
+  #     args:
+  #       - NEON_DATABASE_URL=${NEON_DATABASE_URL}
+  #   ports:
+  #     - "5000:5000"
+  #   environment:
+  #     NEON_DATABASE_URL: "${NEON_DATABASE_URL}"
+  #     AWS_ACCESS_KEY_ID: "${AWS_ACCESS_KEY_ID}"
+  #     AWS_SECRET_ACCESS_KEY: "${AWS_SECRET_ACCESS_KEY}"
+  #     S3_BUCKET: "${S3_BUCKET}"
+  #   env_file:
+  #     - .env
+  #     - .secrets
+  #   command: >
+  #     sh -c '
+  #     echo "Testing connection to NeonDB with URL: ${NEON_DATABASE_URL}" &&
+  #     mlflow server 
+  #     --host 0.0.0.0 
+  #     --port 5000 
+  #     --backend-store-uri "${NEON_DATABASE_URL}"
+  #     --default-artifact-root s3://${S3_BUCKET}/mlflow/ 
+  #     --serve-artifacts'
+  #   networks:
+  #     - airflow_default
 
 networks:
   airflow_default:
@@ -286,3 +291,4 @@ networks:
 
 volumes:
   postgres-db-volume:
+  mlflow-db-volume:

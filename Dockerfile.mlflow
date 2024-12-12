@@ -1,9 +1,5 @@
 FROM python:3.9-slim
 
-ARG NEON_DATABASE_URL
-
-ENV NEON_DATABASE_URL=$NEON_DATABASE_URL
-
 WORKDIR /mlflow
 
 # Installation des dépendances système
