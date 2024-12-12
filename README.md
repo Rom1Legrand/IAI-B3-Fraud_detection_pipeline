@@ -11,6 +11,9 @@ FraudDetection is an end-to-end fraud detection system that processes payment tr
 - Use the provided `.env.example` and `.secrets.example` as templates
 
 ## 🏗️ Technical Architecture and options
+
+![alt text](image.png)
+
 This project can be deployed in two configurations:
 
 ### Services
